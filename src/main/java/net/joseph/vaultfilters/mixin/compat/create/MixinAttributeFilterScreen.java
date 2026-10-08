@@ -5,16 +5,10 @@ import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.mojang.blaze3d.platform.InputConstants;
 import com.simibubi.create.AllItems;
 import com.simibubi.create.AllPackets;
-import com.simibubi.create.content.logistics.filter.AbstractFilterScreen;
-import com.simibubi.create.content.logistics.filter.AttributeFilterMenu;
-import com.simibubi.create.content.logistics.filter.AttributeFilterScreen;
-import com.simibubi.create.content.logistics.filter.FilterItemStack;
-import com.simibubi.create.content.logistics.filter.FilterScreenPacket;
-import com.simibubi.create.content.logistics.filter.ItemAttribute;
+import com.simibubi.create.content.logistics.filter.*;
 import com.simibubi.create.foundation.gui.AllGuiTextures;
 import com.simibubi.create.foundation.utility.Components;
 import com.simibubi.create.foundation.utility.Pair;
-import net.joseph.vaultfilters.attributes.abstracts.VaultAttribute;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
 import net.minecraft.nbt.CompoundTag;
@@ -23,14 +17,12 @@ import net.minecraft.nbt.Tag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.level.Level;
+import net.minecraftforge.items.ItemStackHandler;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.ModifyConstant;
-import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
@@ -56,15 +48,22 @@ public abstract class MixinAttributeFilterScreen extends AbstractFilterScreen<At
 //            }
 //        }
 //    }
+
     @Shadow
     private List<ItemAttribute> attributesOfItem = new ArrayList<>();
     @Inject(at = @At(value = "INVOKE_ASSIGN", target = "Ljava/util/List;stream()Ljava/util/stream/Stream;",shift = At.Shift.BEFORE), method = "referenceItemChanged")
     public void addAttributesFromFilter(ItemStack stack, CallbackInfo ci) {
-        if (stack.is(AllItems.ATTRIBUTE_FILTER.get())) {
-            boolean defaults = !stack.hasTag();
-            ListTag attributes = defaults ? new ListTag() : stack.getTag().getList("MatchedAttributes", 10);
+        attributesOfItem.addAll(vault_Filters$extractAttributesFromFilter(stack));
+    }
+
+    @Unique
+    private static List<ItemAttribute> vault_Filters$extractAttributesFromFilter(ItemStack filterStack) {
+        List<ItemAttribute> attributesOfItem = new ArrayList<>();
+        if (filterStack.is(AllItems.ATTRIBUTE_FILTER.get())) {
+            boolean defaults = !filterStack.hasTag();
+            ListTag attributes = defaults ? new ListTag() : filterStack.getTag().getList("MatchedAttributes", 10);
             if (attributes.isEmpty()) {
-                return;
+                return List.of();
             }
             for (Tag inbt : attributes) {
                 CompoundTag compound = (CompoundTag)inbt;
@@ -74,6 +73,19 @@ public abstract class MixinAttributeFilterScreen extends AbstractFilterScreen<At
                 }
             }
         }
+        else if(filterStack.is(AllItems.FILTER.get())) {
+            ItemStackHandler filterInventory = FilterItem.getFilterItems(filterStack);
+            for(int i = 0; i < filterInventory.getSlots(); i++) {
+                ItemStack slotStack = filterInventory.getStackInSlot(i);
+                if(slotStack.isEmpty()) {
+                    continue;
+                }
+
+                attributesOfItem.addAll(vault_Filters$extractAttributesFromFilter(slotStack));
+            }
+        }
+
+        return attributesOfItem;
     }
 
 
@@ -84,7 +96,7 @@ public abstract class MixinAttributeFilterScreen extends AbstractFilterScreen<At
     @Unique private int vault_Filters$selectedAttrIndex = 0;
     @Unique private int vault_Filters$deletionLastTick = 0;
     @Unique private int vault_Filters$deletionProgressTick = 0;
-    
+
     // scrolling of selected attributes
     @Override public boolean mouseScrolled(double pMouseX, double pMouseY, double pDelta) {
         var res = super.mouseScrolled(pMouseX, pMouseY, pDelta);
@@ -113,8 +125,8 @@ public abstract class MixinAttributeFilterScreen extends AbstractFilterScreen<At
 
     // deletion tooltip
     @Unique private static final Component vault_Filters$delTooltipLine =  Components.literal("Hold [").withStyle(ChatFormatting.GRAY).withStyle(ChatFormatting.ITALIC)
-        .append(Components.literal("DEL").withStyle(ChatFormatting.WHITE))
-        .append(Components.literal("] to remove attribute"));
+            .append(Components.literal("DEL").withStyle(ChatFormatting.WHITE))
+            .append(Components.literal("] to remove attribute"));
 
     @Inject(method = "init", at = @At("TAIL"), remap = true)
     private void addDelTooltipLine(CallbackInfo ci) {
@@ -194,7 +206,7 @@ public abstract class MixinAttributeFilterScreen extends AbstractFilterScreen<At
         CompoundTag tag = new CompoundTag();
         itemAttribute.serializeNBT(tag);
         AllPackets.getChannel()
-            .sendToServer(new FilterScreenPacket(inverted ? FilterScreenPacket.Option.ADD_INVERTED_TAG : FilterScreenPacket.Option.ADD_TAG, tag));
+                .sendToServer(new FilterScreenPacket(inverted ? FilterScreenPacket.Option.ADD_INVERTED_TAG : FilterScreenPacket.Option.ADD_TAG, tag));
         this.menu.appendSelectedAttribute(itemAttribute, inverted);
         if (((AttributeFilterMenuAccessor) this.menu).getSelectedAttributes().size() == 1) {
             this.selectedAttributes.set(0, this.selectedT.plainCopy().withStyle(ChatFormatting.YELLOW));
